@@ -45,6 +45,7 @@ export const InstanceRoutes = (upgrade: UpgradeWebSocket): Hono => {
   if (Flag.OPENCODE_EXPERIMENTAL_HTTPAPI) {
     const handler = ExperimentalHttpApiServer.webHandler().handler
     const context = Context.empty() as Context.Context<unknown>
+    app.all("/api/*", (c) => handler(c.req.raw, context))
     app.get(EventPaths.event, (c) => handler(c.req.raw, context))
     app.get("/question", (c) => handler(c.req.raw, context))
     app.post("/question/:requestID/reply", (c) => handler(c.req.raw, context))
