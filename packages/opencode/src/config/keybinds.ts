@@ -112,6 +112,7 @@ const KeybindsSchema = Schema.Struct({
   // `Keybinds.parse(...)`, so the schema-level transform was redundant.
   terminal_suspend: keybind("ctrl+z", "Suspend terminal"),
   terminal_title_toggle: keybind("none", "Toggle terminal title"),
+  permission_auto_accept_toggle: keybind("none", "Toggle auto-accept for edit permissions"),
   tips_toggle: keybind("<leader>h", "Toggle tips on home screen"),
   plugin_manager: keybind("none", "Open plugin manager dialog"),
   display_thinking: keybind("none", "Toggle thinking blocks visibility"),
