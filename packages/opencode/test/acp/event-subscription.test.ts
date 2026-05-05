@@ -815,6 +815,126 @@ describe("acp.agent event subscription", () => {
         const result = await promptPromise
         expect(promptDone).toBe(true)
         expect(result.stopReason).toBe("end_turn")
+        stop()
+      },
+    })
+  })
+
+  test("prompt() returns stopReason: cancelled with no usage when message has MessageAbortedError", async () => {
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { agent, controller, sdk, stop } = createFakeAgent()
+        const cwd = "/tmp/opencode-acp-test"
+        const sessionId = await agent.newSession({ cwd, mcpServers: [] } as any).then((x) => x.sessionId)
+        const info = {
+          id: "msg_aborted_1",
+          sessionID: sessionId,
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+          cost: 0,
+          parentID: "u1",
+          modelID: "big-pickle",
+          providerID: "opencode",
+          mode: "build",
+          agent: "build",
+          path: { cwd, root: cwd },
+          error: { name: "MessageAbortedError", data: { message: "Aborted" } },
+        }
+
+        // Server-side `session/prompt` resolves with the in-flight assistant
+        // message tagged with `MessageAbortedError` when the runner is
+        // interrupted by `session/cancel` (see processor.ts halt path).
+        // tokens stay at the zero initialiser because the LLM stream never
+        // emitted `finish-step`.
+        sdk.session.prompt = async () => ({
+          data: {
+            info,
+          },
+        })
+
+        const resultPromise = (agent as any).prompt({
+          sessionId,
+          prompt: [{ type: "text", text: "long task" }],
+        })
+        await new Promise((r) => setTimeout(r, 20))
+        controller.push({
+          directory: cwd,
+          payload: {
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info,
+            },
+          } as any,
+        })
+        const result = await resultPromise
+
+        // ACP defines stopReason: "cancelled" for exactly this case.
+        // Returning "end_turn" hides the cancel from the client.
+        expect(result.stopReason).toBe("cancelled")
+        // Usage on cancel is unreliable — the SDK never emitted finish-step
+        // so tokens are all 0. Reporting `totalTokens: 0` is misleading
+        // (the provider has charged us for prompt tokens, we just don't
+        // know the count). Omit `usage` so clients show "unknown".
+        expect(result.usage).toBeUndefined()
+
+        stop()
+      },
+    })
+  })
+
+  test("prompt() returns stopReason: end_turn with usage on normal completion", async () => {
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { agent, controller, sdk, stop } = createFakeAgent()
+        const cwd = "/tmp/opencode-acp-test"
+        const sessionId = await agent.newSession({ cwd, mcpServers: [] } as any).then((x) => x.sessionId)
+        const info = {
+          id: "msg_done_1",
+          sessionID: sessionId,
+          role: "assistant" as const,
+          time: { created: 1, completed: 2 },
+          tokens: { input: 100, output: 50, reasoning: 0, cache: { read: 200, write: 0 } },
+          cost: 0,
+          parentID: "u1",
+          modelID: "big-pickle",
+          providerID: "opencode",
+          mode: "build",
+          agent: "build",
+          path: { cwd, root: cwd },
+        }
+
+        sdk.session.prompt = async () => ({
+          data: {
+            info,
+          },
+        })
+
+        const resultPromise = (agent as any).prompt({
+          sessionId,
+          prompt: [{ type: "text", text: "hi" }],
+        })
+        await new Promise((r) => setTimeout(r, 20))
+        controller.push({
+          directory: cwd,
+          payload: {
+            type: "message.updated",
+            properties: {
+              sessionID: sessionId,
+              info,
+            },
+          } as any,
+        })
+        const result = await resultPromise
+
+        expect(result.stopReason).toBe("end_turn")
+        expect(result.usage?.totalTokens).toBe(350)
+        expect(result.usage?.inputTokens).toBe(100)
 
         stop()
       },
