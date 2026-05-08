@@ -124,7 +124,7 @@ describe("session.retry.delay", () => {
     }),
   )
 
-  it.instance("policy stops after five retries", () =>
+  it.instance("policy stops after the configured retry cap", () =>
     Effect.gen(function* () {
       const attempts: number[] = []
       const error = apiError({ "retry-after-ms": "0" })
