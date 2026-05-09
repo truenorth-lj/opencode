@@ -338,6 +338,7 @@ describe("session.retry.policy.maxAttempts", () => {
 
         const step = yield* Schedule.toStepWithMetadata(
           SessionRetry.policy({
+            provider: "test",
             parse: (err) => MessageV2.APIError.Schema.parse(err),
             set: (info) => {
               setCallCount++

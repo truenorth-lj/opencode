@@ -727,7 +727,7 @@ describe("acp.agent event subscription", () => {
 
   test("prompt() awaits message.updated for response messageID before returning end_turn", async () => {
     await using tmp = await tmpdir()
-    await Instance.provide({
+    await WithInstance.provide({
       directory: tmp.path,
       fn: async () => {
         const { agent, controller, sdk, stop } = createFakeAgent()
