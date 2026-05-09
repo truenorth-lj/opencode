@@ -159,6 +159,28 @@ describe("llmErrorPayloadFromSDK", () => {
     expect(payload.retry_after_seconds).toBe(30)
   })
 
+  test("APIError without headers, status 402 → budget non-retriable", () => {
+    // Standard-HTTP path: proxy expresses budget exhaustion via 402
+    // Payment Required (no custom headers).
+    const error: ApiError = {
+      name: "APIError",
+      data: { message: "Weekly budget exhausted", statusCode: 402, isRetryable: false },
+    }
+    const payload = llmErrorPayloadFromSDK(error)
+    expect(payload.type).toBe("budget")
+    expect(payload.retryable).toBe(false)
+  })
+
+  test("APIError without headers, status 429 → rate_limit retriable", () => {
+    const error: ApiError = {
+      name: "APIError",
+      data: { message: "Rate limited", statusCode: 429, isRetryable: true },
+    }
+    const payload = llmErrorPayloadFromSDK(error)
+    expect(payload.type).toBe("rate_limit")
+    expect(payload.retryable).toBe(true)
+  })
+
   test("APIError without classification headers, status 503 → provider_unavailable", () => {
     const error: ApiError = {
       name: "APIError",

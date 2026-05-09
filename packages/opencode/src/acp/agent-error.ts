@@ -261,8 +261,19 @@ function resolveTypeFromHeaders(value: string | undefined): LLMErrorType | undef
 }
 
 function resolveTypeFromStatus(status: number | undefined): LLMErrorType {
+  // Status mapping mirrors the contract the upstream proxy emits when it
+  // chooses to express retry semantics through standard HTTP signals
+  // instead of custom headers (see tn-claw `_llm_error_classifier.py`):
+  //   402 → budget (proxy remaps 429 + budget_error → 402 to clear AI SDK
+  //                 isRetryable; opencode's halt path then fires)
+  //   429 → rate_limit (kept; opencode's delay() honors `Retry-After`)
+  //   503 (and any other 5xx) → provider_unavailable
+  //   401 / 403 → auth
+  //   anything else → unknown
   if (status === undefined) return "unknown"
-  if (status === 401) return "auth"
+  if (status === 402) return "budget"
+  if (status === 401 || status === 403) return "auth"
+  if (status === 429) return "rate_limit"
   if (status >= 500) return "provider_unavailable"
   return "unknown"
 }
