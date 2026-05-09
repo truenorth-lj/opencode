@@ -5,7 +5,9 @@ import {
   type SessionUpdateWithAgentError,
   isAgentErrorUpdate,
   isRetriable,
+  llmErrorPayloadFromSDK,
 } from "../../src/acp/agent-error"
+import type { ApiError } from "@opencode-ai/sdk/v2"
 
 describe("isRetriable", () => {
   test.each([
@@ -88,6 +90,33 @@ describe("isAgentErrorUpdate", () => {
       expect(decoded.error.reset_at_epoch_ms).toBe(1778457600000)
       expect(decoded.error.source).toBe("global")
     }
+  })
+})
+
+describe("llmErrorPayloadFromSDK", () => {
+  test("maps standard HTTP 402 fallback to non-retriable budget", () => {
+    const error: ApiError = {
+      name: "APIError",
+      data: { message: "Weekly budget exhausted", statusCode: 402, isRetryable: false },
+    }
+
+    const payload = llmErrorPayloadFromSDK(error)
+
+    expect(payload.type).toBe("budget")
+    expect(payload.retryable).toBe(false)
+    expect(payload.message).toBe("Weekly budget exhausted")
+  })
+
+  test("maps standard HTTP 429 fallback to retriable rate_limit", () => {
+    const error: ApiError = {
+      name: "APIError",
+      data: { message: "Rate limited", statusCode: 429, isRetryable: true },
+    }
+
+    const payload = llmErrorPayloadFromSDK(error)
+
+    expect(payload.type).toBe("rate_limit")
+    expect(payload.retryable).toBe(true)
   })
 })
 
