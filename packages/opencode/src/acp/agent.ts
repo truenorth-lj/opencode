@@ -299,6 +299,11 @@ export class Agent implements ACPAgent {
         // continues; do not surface it as a turn-ending error. Non-overflow
         // errors fall through to the agent_error emit below.
         if (error.name === "ContextOverflowError") return
+        // MessageAbortedError is the normal user-stop path triggered by
+        // session/cancel. The prompt RPC reports stopReason=cancelled, so
+        // emitting agent_error here makes a deliberate stop look like a
+        // failure to ACP clients.
+        if (error.name === "MessageAbortedError") return
 
         const session = this.sessionManager.tryGet(sessionID)
         if (!session) return

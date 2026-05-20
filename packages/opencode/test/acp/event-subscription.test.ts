@@ -337,6 +337,42 @@ describe("acp.agent event subscription", () => {
     })
   })
 
+  test("does not emit agent_error for user-cancelled MessageAbortedError", async () => {
+    await using tmp = await tmpdir()
+    await WithInstance.provide({
+      directory: tmp.path,
+      fn: async () => {
+        const { agent, controller, sessionUpdates, stop } = createFakeAgent()
+        const cwd = "/tmp/opencode-acp-test"
+        const sessionId = await agent.newSession({ cwd, mcpServers: [] } as any).then((x) => x.sessionId)
+
+        controller.push({
+          directory: cwd,
+          payload: {
+            type: "session.error",
+            properties: {
+              sessionID: sessionId,
+              error: {
+                name: "MessageAbortedError",
+                data: { message: "Aborted" },
+              },
+            },
+          } as any,
+        })
+
+        await new Promise((r) => setTimeout(r, 20))
+
+        expect(
+          sessionUpdates
+            .filter((u) => u.sessionId === sessionId)
+            .some((u) => (u.update as { sessionUpdate?: string }).sessionUpdate === "agent_error"),
+        ).toBe(false)
+
+        stop()
+      },
+    })
+  })
+
   test("keeps concurrent sessions isolated when message.part.delta events are interleaved", async () => {
     await using tmp = await tmpdir()
     await WithInstance.provide({
