@@ -7,7 +7,7 @@ import { lazy } from "@opencode-ai/core/util/lazy"
 import { Plugin } from "@/plugin"
 import type { SessionID } from "@/session/schema"
 import { Shell } from "@/shell/shell"
-import { applyTnClawSessionEnv } from "@/tn-claw/session-env"
+import { applyTnClawSessionEnv, protectSessionlessSharedEnv } from "@/tn-claw/session-env"
 import type { Proc } from "#pty"
 import * as Log from "@opencode-ai/core/util/log"
 import { PtyID } from "./schema"
@@ -200,7 +200,7 @@ export const layer = Layer.effect(
         TERM: "xterm-256color",
         OPENCODE_TERMINAL: "1",
       } as Record<string, string>
-      const env = input.sessionID ? applyTnClawSessionEnv(baseEnv, input.sessionID) : baseEnv
+      const env = input.sessionID ? applyTnClawSessionEnv(baseEnv, input.sessionID) : protectSessionlessSharedEnv(baseEnv)
 
       if (process.platform === "win32") {
         env.LC_ALL = "C.UTF-8"
