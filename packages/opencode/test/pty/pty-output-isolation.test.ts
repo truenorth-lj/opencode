@@ -6,8 +6,53 @@ import { WithInstance } from "../../src/project/with-instance"
 import { Pty } from "../../src/pty"
 import { tmpdir } from "../fixture/fixture"
 import { setTimeout as sleep } from "node:timers/promises"
+import { SessionID } from "../../src/session/schema"
 
 describe("pty", () => {
+  test("forces internal session env after caller env", async () => {
+    await using dir = await tmpdir({ git: true })
+
+    await WithInstance.provide({
+      directory: dir.path,
+      fn: () =>
+        AppRuntime.runPromise(
+          Effect.gen(function* () {
+            const pty = yield* Pty.Service
+            const sessionID = SessionID.make("ses_pty_current")
+            const script = "console.log(process.env.TN_CLAW_SESSION_ID || ''); setTimeout(() => {}, 200)"
+            const active = yield* pty.create({
+              command: process.execPath,
+              args: ["-e", script],
+              title: "session env",
+              env: { TN_CLAW_SESSION_ID: "ses_input_stale" },
+              sessionID,
+            })
+            try {
+              const out: string[] = []
+              const ws = {
+                readyState: 1,
+                data: { events: { connection: "session-env" } },
+                send: (data: unknown) => {
+                  out.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
+                },
+                close: () => {
+                  // no-op
+                },
+              }
+
+              yield* pty.connect(active.id, ws as any)
+              yield* Effect.promise(() => sleep(150))
+
+              expect(out.join("")).toContain(sessionID)
+              expect(out.join("")).not.toContain("ses_input_stale")
+            } finally {
+              yield* pty.remove(active.id)
+            }
+          }),
+        ),
+    })
+  })
+
   test("does not leak output when websocket objects are reused", async () => {
     await using dir = await tmpdir({ git: true })
 

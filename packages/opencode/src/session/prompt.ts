@@ -61,6 +61,7 @@ import * as DateTime from "effect/DateTime"
 import { eq } from "@/storage/db"
 import * as Database from "@/storage/db"
 import { SessionTable } from "./session.sql"
+import { applyTnClawSessionEnv } from "@/tn-claw/session-env"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -862,7 +863,7 @@ NOTE: At any point in time through this workflow you should feel free to ask the
               const cmd = ChildProcess.make(sh, args, {
                 cwd,
                 extendEnv: true,
-                env: { ...shellEnv.env, TERM: "dumb" },
+                env: applyTnClawSessionEnv({ ...shellEnv.env, TERM: "dumb" }, input.sessionID),
                 stdin: "ignore",
                 forceKillAfter: "3 seconds",
               })

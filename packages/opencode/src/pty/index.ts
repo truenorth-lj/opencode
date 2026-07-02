@@ -5,7 +5,9 @@ import { InstanceState } from "@/effect/instance-state"
 import { EffectBridge } from "@/effect/bridge"
 import { lazy } from "@opencode-ai/core/util/lazy"
 import { Plugin } from "@/plugin"
+import type { SessionID } from "@/session/schema"
 import { Shell } from "@/shell/shell"
+import { applyTnClawSessionEnv } from "@/tn-claw/session-env"
 import type { Proc } from "#pty"
 import * as Log from "@opencode-ai/core/util/log"
 import { PtyID } from "./schema"
@@ -77,6 +79,7 @@ export const CreateInput = Schema.Struct({
 }).pipe(withStatics((s) => ({ zod: zod(s) })))
 
 export type CreateInput = Types.DeepMutable<Schema.Schema.Type<typeof CreateInput>>
+export type InternalCreateInput = CreateInput & { sessionID?: SessionID }
 
 export const UpdateInput = Schema.Struct({
   title: Schema.optional(Schema.String),
@@ -100,7 +103,7 @@ export const Event = {
 export interface Interface {
   readonly list: () => Effect.Effect<Info[]>
   readonly get: (id: PtyID) => Effect.Effect<Info | undefined>
-  readonly create: (input: CreateInput) => Effect.Effect<Info>
+  readonly create: (input: InternalCreateInput) => Effect.Effect<Info>
   readonly update: (id: PtyID, input: UpdateInput) => Effect.Effect<Info | undefined>
   readonly remove: (id: PtyID) => Effect.Effect<void>
   readonly resize: (id: PtyID, cols: number, rows: number) => Effect.Effect<void>
@@ -173,7 +176,7 @@ export const layer = Layer.effect(
       return s.sessions.get(id)?.info
     })
 
-    const create = Effect.fn("Pty.create")(function* (input: CreateInput) {
+    const create = Effect.fn("Pty.create")(function* (input: InternalCreateInput) {
       const s = yield* InstanceState.get(state)
       const bridge = yield* EffectBridge.make()
       const cfg = yield* config.get()
@@ -185,14 +188,19 @@ export const layer = Layer.effect(
       }
 
       const cwd = input.cwd || s.dir
-      const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} })
-      const env = {
+      const shell = yield* plugin.trigger(
+        "shell.env",
+        input.sessionID ? { cwd, sessionID: input.sessionID } : { cwd },
+        { env: {} },
+      )
+      const baseEnv = {
         ...process.env,
         ...input.env,
         ...shell.env,
         TERM: "xterm-256color",
         OPENCODE_TERMINAL: "1",
       } as Record<string, string>
+      const env = input.sessionID ? applyTnClawSessionEnv(baseEnv, input.sessionID) : baseEnv
 
       if (process.platform === "win32") {
         env.LC_ALL = "C.UTF-8"
