@@ -53,10 +53,16 @@ describe("pty", () => {
     })
   })
 
-  test("removes loopback credentials from sessionless shared PTY env", async () => {
+  test("removes loopback credentials from sessionless PTY env", async () => {
     await using dir = await tmpdir({ git: true })
     const originalShared = process.env.TN_CLAW_OPENCODE_SHARED_SERVER
-    process.env.TN_CLAW_OPENCODE_SHARED_SERVER = "1"
+    const originalLoopback = process.env.TN_CLAW_LOOPBACK_TOKEN
+    const originalSession = process.env.TN_CLAW_SESSION_ID
+    const originalInstance = process.env.TN_CLAW_INSTANCE_ID
+    process.env.TN_CLAW_OPENCODE_SHARED_SERVER = "0"
+    process.env.TN_CLAW_LOOPBACK_TOKEN = "process-loopback-token"
+    process.env.TN_CLAW_SESSION_ID = "ses_process_stale"
+    process.env.TN_CLAW_INSTANCE_ID = "inst-process-stale"
 
     try {
       await WithInstance.provide({
@@ -69,7 +75,6 @@ describe("pty", () => {
                 "console.log(process.env.TN_CLAW_LOOPBACK_TOKEN || 'NO_LOOPBACK_TOKEN')",
                 "console.log(process.env.TN_CLAW_SESSION_ID || 'NO_SESSION_ID')",
                 "console.log(process.env.TN_CLAW_INSTANCE_ID || 'NO_INSTANCE_ID')",
-                "console.log(process.env.TN_CLAW_OPENCODE_SHARED_SERVER || 'NO_SHARED_MARKER')",
                 "setTimeout(() => {}, 200)",
               ].join(";")
               const active = yield* pty.create({
@@ -77,7 +82,6 @@ describe("pty", () => {
                 args: ["-e", script],
                 title: "sessionless shared env",
                 env: {
-                  TN_CLAW_OPENCODE_SHARED_SERVER: "0",
                   TN_CLAW_LOOPBACK_TOKEN: "loopback-token",
                   TN_CLAW_SESSION_ID: "ses_stale",
                   TN_CLAW_INSTANCE_ID: "inst-stale",
@@ -103,10 +107,12 @@ describe("pty", () => {
                 expect(output).toContain("NO_LOOPBACK_TOKEN")
                 expect(output).toContain("NO_SESSION_ID")
                 expect(output).toContain("NO_INSTANCE_ID")
-                expect(output).toContain("1")
                 expect(output).not.toContain("loopback-token")
+                expect(output).not.toContain("process-loopback-token")
                 expect(output).not.toContain("ses_stale")
+                expect(output).not.toContain("ses_process_stale")
                 expect(output).not.toContain("inst-stale")
+                expect(output).not.toContain("inst-process-stale")
               } finally {
                 yield* pty.remove(active.id)
               }
@@ -116,6 +122,12 @@ describe("pty", () => {
     } finally {
       if (originalShared === undefined) delete process.env.TN_CLAW_OPENCODE_SHARED_SERVER
       else process.env.TN_CLAW_OPENCODE_SHARED_SERVER = originalShared
+      if (originalLoopback === undefined) delete process.env.TN_CLAW_LOOPBACK_TOKEN
+      else process.env.TN_CLAW_LOOPBACK_TOKEN = originalLoopback
+      if (originalSession === undefined) delete process.env.TN_CLAW_SESSION_ID
+      else process.env.TN_CLAW_SESSION_ID = originalSession
+      if (originalInstance === undefined) delete process.env.TN_CLAW_INSTANCE_ID
+      else process.env.TN_CLAW_INSTANCE_ID = originalInstance
     }
   })
 

@@ -1,10 +1,9 @@
 import { expect, test } from "bun:test"
 import {
   applyTnClawSessionEnv,
-  protectSessionlessSharedEnv,
+  protectSessionlessEnv,
   TN_CLAW_INSTANCE_ID_ENV,
   TN_CLAW_LOOPBACK_TOKEN_ENV,
-  TN_CLAW_OPENCODE_SHARED_SERVER_ENV,
   TN_CLAW_SESSION_ID_ENV,
 } from "../../src/tn-claw/session-env"
 
@@ -21,34 +20,16 @@ test("trusted session env overwrites stale plugin output", () => {
   expect(env.OTHER_ENV).toBe("kept")
 })
 
-test("sessionless shared env cannot inherit loopback credentials", () => {
-  const env = protectSessionlessSharedEnv(
-    {
-      [TN_CLAW_OPENCODE_SHARED_SERVER_ENV]: "0",
-      [TN_CLAW_LOOPBACK_TOKEN_ENV]: "loopback-token",
-      [TN_CLAW_SESSION_ID_ENV]: "ses_stale",
-      [TN_CLAW_INSTANCE_ID_ENV]: "inst-stale",
-      OTHER_ENV: "kept",
-    },
-    true,
-  )
+test("sessionless env cannot inherit loopback credentials", () => {
+  const env = protectSessionlessEnv({
+    [TN_CLAW_LOOPBACK_TOKEN_ENV]: "loopback-token",
+    [TN_CLAW_SESSION_ID_ENV]: "ses_stale",
+    [TN_CLAW_INSTANCE_ID_ENV]: "inst-stale",
+    OTHER_ENV: "kept",
+  })
 
   expect(env[TN_CLAW_LOOPBACK_TOKEN_ENV]).toBeUndefined()
   expect(env[TN_CLAW_SESSION_ID_ENV]).toBeUndefined()
   expect(env[TN_CLAW_INSTANCE_ID_ENV]).toBeUndefined()
-  expect(env[TN_CLAW_OPENCODE_SHARED_SERVER_ENV]).toBe("1")
   expect(env.OTHER_ENV).toBe("kept")
-})
-
-test("sessionless non-shared env keeps legacy loopback credentials", () => {
-  const env = protectSessionlessSharedEnv(
-    {
-      [TN_CLAW_LOOPBACK_TOKEN_ENV]: "loopback-token",
-      [TN_CLAW_INSTANCE_ID_ENV]: "inst-current",
-    },
-    false,
-  )
-
-  expect(env[TN_CLAW_LOOPBACK_TOKEN_ENV]).toBe("loopback-token")
-  expect(env[TN_CLAW_INSTANCE_ID_ENV]).toBe("inst-current")
 })
