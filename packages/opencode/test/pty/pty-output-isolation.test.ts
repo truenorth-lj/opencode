@@ -55,59 +55,68 @@ describe("pty", () => {
 
   test("removes loopback credentials from sessionless shared PTY env", async () => {
     await using dir = await tmpdir({ git: true })
+    const originalShared = process.env.TN_CLAW_OPENCODE_SHARED_SERVER
+    process.env.TN_CLAW_OPENCODE_SHARED_SERVER = "1"
 
-    await WithInstance.provide({
-      directory: dir.path,
-      fn: () =>
-        AppRuntime.runPromise(
-          Effect.gen(function* () {
-            const pty = yield* Pty.Service
-            const script = [
-              "console.log(process.env.TN_CLAW_LOOPBACK_TOKEN || 'NO_LOOPBACK_TOKEN')",
-              "console.log(process.env.TN_CLAW_SESSION_ID || 'NO_SESSION_ID')",
-              "console.log(process.env.TN_CLAW_INSTANCE_ID || 'NO_INSTANCE_ID')",
-              "setTimeout(() => {}, 200)",
-            ].join(";")
-            const active = yield* pty.create({
-              command: process.execPath,
-              args: ["-e", script],
-              title: "sessionless shared env",
-              env: {
-                TN_CLAW_OPENCODE_SHARED_SERVER: "1",
-                TN_CLAW_LOOPBACK_TOKEN: "loopback-token",
-                TN_CLAW_SESSION_ID: "ses_stale",
-                TN_CLAW_INSTANCE_ID: "inst-stale",
-              },
-            })
-            try {
-              const out: string[] = []
-              const ws = {
-                readyState: 1,
-                data: { events: { connection: "sessionless-shared-env" } },
-                send: (data: unknown) => {
-                  out.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
+    try {
+      await WithInstance.provide({
+        directory: dir.path,
+        fn: () =>
+          AppRuntime.runPromise(
+            Effect.gen(function* () {
+              const pty = yield* Pty.Service
+              const script = [
+                "console.log(process.env.TN_CLAW_LOOPBACK_TOKEN || 'NO_LOOPBACK_TOKEN')",
+                "console.log(process.env.TN_CLAW_SESSION_ID || 'NO_SESSION_ID')",
+                "console.log(process.env.TN_CLAW_INSTANCE_ID || 'NO_INSTANCE_ID')",
+                "console.log(process.env.TN_CLAW_OPENCODE_SHARED_SERVER || 'NO_SHARED_MARKER')",
+                "setTimeout(() => {}, 200)",
+              ].join(";")
+              const active = yield* pty.create({
+                command: process.execPath,
+                args: ["-e", script],
+                title: "sessionless shared env",
+                env: {
+                  TN_CLAW_OPENCODE_SHARED_SERVER: "0",
+                  TN_CLAW_LOOPBACK_TOKEN: "loopback-token",
+                  TN_CLAW_SESSION_ID: "ses_stale",
+                  TN_CLAW_INSTANCE_ID: "inst-stale",
                 },
-                close: () => {
-                  // no-op
-                },
+              })
+              try {
+                const out: string[] = []
+                const ws = {
+                  readyState: 1,
+                  data: { events: { connection: "sessionless-shared-env" } },
+                  send: (data: unknown) => {
+                    out.push(typeof data === "string" ? data : Buffer.from(data as Uint8Array).toString("utf8"))
+                  },
+                  close: () => {
+                    // no-op
+                  },
+                }
+
+                yield* pty.connect(active.id, ws as any)
+                yield* Effect.promise(() => sleep(150))
+
+                const output = out.join("")
+                expect(output).toContain("NO_LOOPBACK_TOKEN")
+                expect(output).toContain("NO_SESSION_ID")
+                expect(output).toContain("NO_INSTANCE_ID")
+                expect(output).toContain("1")
+                expect(output).not.toContain("loopback-token")
+                expect(output).not.toContain("ses_stale")
+                expect(output).not.toContain("inst-stale")
+              } finally {
+                yield* pty.remove(active.id)
               }
-
-              yield* pty.connect(active.id, ws as any)
-              yield* Effect.promise(() => sleep(150))
-
-              const output = out.join("")
-              expect(output).toContain("NO_LOOPBACK_TOKEN")
-              expect(output).toContain("NO_SESSION_ID")
-              expect(output).toContain("NO_INSTANCE_ID")
-              expect(output).not.toContain("loopback-token")
-              expect(output).not.toContain("ses_stale")
-              expect(output).not.toContain("inst-stale")
-            } finally {
-              yield* pty.remove(active.id)
-            }
-          }),
-        ),
-    })
+            }),
+          ),
+      })
+    } finally {
+      if (originalShared === undefined) delete process.env.TN_CLAW_OPENCODE_SHARED_SERVER
+      else process.env.TN_CLAW_OPENCODE_SHARED_SERVER = originalShared
+    }
   })
 
   test("does not leak output when websocket objects are reused", async () => {

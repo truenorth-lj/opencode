@@ -13,11 +13,15 @@ export function applyTnClawSessionEnv<T extends Record<string, string | undefine
   }
 }
 
-export function protectSessionlessSharedEnv<T extends Record<string, string | undefined>>(env: T): T {
-  if (env[TN_CLAW_OPENCODE_SHARED_SERVER_ENV] !== "1") return env
+export function protectSessionlessSharedEnv(
+  env: Record<string, string>,
+  shared: boolean,
+): Record<string, string> {
+  if (!shared) return env
   const protectedEnv = { ...env }
   delete protectedEnv[TN_CLAW_LOOPBACK_TOKEN_ENV]
   delete protectedEnv[TN_CLAW_SESSION_ID_ENV]
   delete protectedEnv[TN_CLAW_INSTANCE_ID_ENV]
+  protectedEnv[TN_CLAW_OPENCODE_SHARED_SERVER_ENV] = "1"
   return protectedEnv
 }
