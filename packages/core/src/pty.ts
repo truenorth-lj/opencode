@@ -44,6 +44,19 @@ function spawnWithoutTnClawSessionlessEnv(
   }
 }
 
+function tnClawSessionlessSpawnCommand(command: string, args: string[]) {
+  if (process.platform === "win32") return { command, args }
+  return {
+    command: "/usr/bin/env",
+    args: [
+      ...TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS.flatMap((key) => ["-u", key]),
+      "--",
+      command,
+      ...args,
+    ],
+  }
+}
+
 type Subscriber = {
   readonly onData: (chunk: string) => void
   readonly onEnd: (event: { exitCode?: number }) => void
@@ -208,8 +221,13 @@ const layer = Layer.effect(
       for (const key of TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS) delete env[key]
       yield* Effect.logInfo("creating session", { id, cmd: command, args, cwd })
       const { spawn } = yield* Effect.promise(() => pty())
+      const spawnCommand = tnClawSessionlessSpawnCommand(command, args)
       const proc = yield* Effect.sync(() =>
-        spawnWithoutTnClawSessionlessEnv(spawn, command, args, { name: "xterm-256color", cwd, env }),
+        spawnWithoutTnClawSessionlessEnv(spawn, spawnCommand.command, spawnCommand.args, {
+          name: "xterm-256color",
+          cwd,
+          env,
+        }),
       )
       const info: Info = {
         id,
