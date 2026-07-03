@@ -843,7 +843,8 @@ const promptResponse = Effect.fn("ACP.promptResponse")(function* (
   if (info.error.name === "MessageAbortedError") {
     return {
       stopReason: "cancelled" as const,
-      ...base,
+      ...(messageId ? { userMessageId: messageId } : {}),
+      _meta: {},
     }
   }
 

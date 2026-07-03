@@ -56,6 +56,7 @@ import { SessionTable } from "@opencode-ai/core/session/sql"
 import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
+import { applyTnClawSessionEnv } from "@/tn-claw/session-env"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -559,7 +560,7 @@ const layer = Layer.effect(
               const cmd = ChildProcess.make(sh, args, {
                 cwd,
                 extendEnv: true,
-                env: { ...shellEnv.env, TERM: "dumb" },
+                env: applyTnClawSessionEnv({ ...shellEnv.env, TERM: "dumb" }, input.sessionID),
                 stdin: "ignore",
                 forceKillAfter: "3 seconds",
               })

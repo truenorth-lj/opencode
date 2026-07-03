@@ -21,6 +21,7 @@ import { ChildProcess } from "effect/unstable/process"
 import { ChildProcessSpawner } from "effect/unstable/process/ChildProcessSpawner"
 import { ShellPrompt, type Parameters } from "./shell/prompt"
 import { BashArity } from "@/permission/arity"
+import { applyTnClawSessionEnv } from "@/tn-claw/session-env"
 
 export { Parameters } from "./shell/prompt"
 
@@ -419,10 +420,7 @@ export const ShellTool = Tool.define(
         { cwd, sessionID: ctx.sessionID, callID: ctx.callID },
         { env: {} },
       )
-      return {
-        ...process.env,
-        ...extra.env,
-      }
+      return applyTnClawSessionEnv({ ...process.env, ...extra.env }, ctx.sessionID)
     })
 
     const run = Effect.fn("ShellTool.run")(function* (

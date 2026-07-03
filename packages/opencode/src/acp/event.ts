@@ -20,6 +20,7 @@ import {
   shellOutputSnapshot,
   completedToolUpdate,
 } from "./tool"
+import { llmErrorPayloadFromSDK, type SDKSessionError, type SessionUpdateWithAgentError } from "./agent-error"
 
 type Connection = Pick<AgentSideConnection, "sessionUpdate"> &
   Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
@@ -98,6 +99,8 @@ export class Subscription {
       case "permission.asked":
         this.permission.handle(event)
         return
+      case "session.error":
+        return this.handleSessionError(event)
       case "message.part.updated":
         return this.handlePartUpdated(event)
       case "message.part.delta":
@@ -186,6 +189,29 @@ export class Subscription {
     if (!waiters) return
     this.idleWaiters.delete(sessionId)
     for (const waiter of waiters) waiter.resolve()
+  }
+
+  private async handleSessionError(event: Extract<Event, { type: "session.error" }>) {
+    const props = event.properties
+    const sessionId = props.sessionID
+    const error = props.error as SDKSessionError | undefined
+    if (!sessionId || !error) return
+    if (error.name === "ContextOverflowError" || error.name === "MessageAbortedError") return
+
+    const session = await Effect.runPromise(this.input.session.tryGet(sessionId))
+    if (!session) return
+
+    const update: SessionUpdateWithAgentError = {
+      sessionUpdate: "agent_error",
+      error: llmErrorPayloadFromSDK(error),
+      stopReason: "error",
+    }
+    await this.input.connection
+      .sessionUpdate({
+        sessionId: session.id,
+        update: update as unknown as Parameters<Connection["sessionUpdate"]>[0]["update"],
+      })
+      .catch(() => {})
   }
 
   private async handlePartUpdated(event: EventMessagePartUpdated) {

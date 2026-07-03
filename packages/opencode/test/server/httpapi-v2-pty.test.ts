@@ -247,4 +247,80 @@ describe("v2 pty HttpApi", () => {
         yield* HttpClientRequest.delete(`/api/pty/${info.id}`).pipe(directoryHeader(dir), HttpClient.execute)
       }),
   )
+
+  ;(process.platform === "win32" ? effectIt.live.skip : effectIt.live)(
+    "strips tn-claw loopback env from sessionless PTY processes",
+    () =>
+      Effect.gen(function* () {
+        const dir = yield* tmpdirScoped({ git: true, config: { formatter: false, lsp: false } })
+        const plugin = path.join(dir, "plugin.ts")
+        yield* Effect.promise(() =>
+          Bun.write(
+            plugin,
+            [
+              "export default async () => ({",
+              '  "shell.env": (_input, output) => {',
+              '    output.env.TN_CLAW_LOOPBACK_TOKEN = "plugin-token"',
+              '    output.env.TN_CLAW_SESSION_ID = "ses_plugin_stale"',
+              '    output.env.TN_CLAW_INSTANCE_ID = "inst_plugin_stale"',
+              '    output.env.OTHER_ENV = "kept"',
+              "  },",
+              "})",
+              "",
+            ].join("\n"),
+          ),
+        )
+        yield* Effect.promise(() =>
+          Bun.write(
+            path.join(dir, "opencode.json"),
+            JSON.stringify({ plugin: [pathToFileURL(plugin).href], formatter: false, lsp: false }),
+          ),
+        )
+
+        const created = yield* HttpClientRequest.post("/api/pty").pipe(
+          directoryHeader(dir),
+          HttpClientRequest.bodyJson({
+            command: "/bin/sh",
+            args: [
+              "-c",
+              'printf "%s|%s|%s|%s\\n" "$TN_CLAW_LOOPBACK_TOKEN" "$TN_CLAW_SESSION_ID" "$TN_CLAW_INSTANCE_ID" "$OTHER_ENV"; sleep 5',
+            ],
+            env: {
+              TN_CLAW_LOOPBACK_TOKEN: "caller-token",
+              TN_CLAW_SESSION_ID: "ses_caller_stale",
+              TN_CLAW_INSTANCE_ID: "inst_caller_stale",
+            },
+          }),
+          Effect.flatMap(HttpClient.execute),
+        )
+        expect(created.status).toBe(200)
+        const info = (yield* Schema.decodeUnknownEffect(Location.response(Pty.Info))(yield* created.json)).data
+
+        const socket = yield* Socket.makeWebSocket(
+          `${(yield* serverUrl()).replace(/^http/, "ws")}/api/pty/${info.id}/connect?cursor=0&location[directory]=${encodeURIComponent(dir)}`,
+          { closeCodeIsError: () => false },
+        )
+        const messages = yield* Queue.unbounded<string>()
+        yield* socket
+          .runRaw((message) =>
+            Queue.offer(messages, typeof message === "string" ? message : new TextDecoder().decode(message)),
+          )
+          .pipe(
+            Effect.catch(() => Effect.void),
+            Effect.forkScoped,
+          )
+        const write = yield* socket.writer
+
+        const takeUntil = (expected: string, seen = ""): Effect.Effect<string, unknown> =>
+          Effect.gen(function* () {
+            const next = seen + (yield* Queue.take(messages).pipe(Effect.timeout("5 seconds")))
+            if (next.includes(expected)) return next
+            return yield* takeUntil(expected, next)
+          })
+
+        expect(yield* takeUntil("|||kept")).toContain("|||kept")
+        yield* write(new Socket.CloseEvent(1000, "done")).pipe(Effect.catch(() => Effect.void))
+        yield* HttpClientRequest.delete(`/api/pty/${info.id}`).pipe(directoryHeader(dir), HttpClient.execute)
+      }),
+  )
 })
