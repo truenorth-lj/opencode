@@ -78,6 +78,26 @@ const attachCollecting = Effect.fn("PtySessionTest.attachCollecting")(function* 
   return { attachment, output, ended }
 })
 
+const withEnv = <A, E, R>(values: Record<string, string>, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const previous: Record<string, string | undefined> = {}
+      for (const [key, value] of Object.entries(values)) {
+        previous[key] = process.env[key]
+        process.env[key] = value
+      }
+      return previous
+    }),
+    () => effect,
+    (previous) =>
+      Effect.sync(() => {
+        for (const [key, value] of Object.entries(previous)) {
+          if (value === undefined) delete process.env[key]
+          else process.env[key] = value
+        }
+      }),
+  )
+
 const waitForOutput = (output: Queue.Queue<string>, text: string) =>
   Effect.gen(function* () {
     let received = ""
@@ -151,6 +171,46 @@ describe("pty", () => {
       expect(tail.attachment.replay).toBe("")
       expect(tail.attachment.cursor).toBe(replayed.attachment.cursor)
     }),
+  )
+
+  ptyTest("strips tn-claw loopback auth from sessionless pty env", () =>
+    withEnv(
+      {
+        TN_CLAW_LOOPBACK_TOKEN: "parent-loopback",
+        TN_CLAW_SESSION_ID: "parent-session",
+        TN_CLAW_INSTANCE_ID: "parent-instance",
+      },
+      Effect.gen(function* () {
+        const pty = yield* Pty.Service
+        const info = yield* Effect.acquireRelease(
+          pty.create({
+            command: "sh",
+            args: [
+              "-c",
+              [
+                "printf 'loopback=%s\\n' \"${TN_CLAW_LOOPBACK_TOKEN-unset}\"",
+                "printf 'session=%s\\n' \"${TN_CLAW_SESSION_ID-unset}\"",
+                "printf 'instance=%s\\n' \"${TN_CLAW_INSTANCE_ID-unset}\"",
+                "sleep 0.2",
+              ].join("; "),
+            ],
+            cwd: "/tmp",
+            env: {
+              TN_CLAW_LOOPBACK_TOKEN: "input-loopback",
+              TN_CLAW_SESSION_ID: "input-session",
+              TN_CLAW_INSTANCE_ID: "input-instance",
+            },
+          }),
+          (created) => pty.remove(created.id).pipe(Effect.ignore),
+        )
+        const attached = yield* attachCollecting(info.id)
+        const output = yield* waitForOutput(attached.output, "instance=unset")
+
+        expect(output).toContain("loopback=unset")
+        expect(output).toContain("session=unset")
+        expect(output).toContain("instance=unset")
+      }),
+    ),
   )
 
   ptyTest("stops delivering output after detach", () =>

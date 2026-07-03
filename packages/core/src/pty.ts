@@ -16,6 +16,11 @@ const BUFFER_LIMIT = 1024 * 1024 * 2
 // Cap retention so abandoned terminals do not accumulate unbounded buffers.
 const EXITED_LIMIT = 25
 const pty = lazy(() => import("#pty"))
+const TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS = [
+  "TN_CLAW_LOOPBACK_TOKEN",
+  "TN_CLAW_SESSION_ID",
+  "TN_CLAW_INSTANCE_ID",
+] as const
 
 type Subscriber = {
   readonly onData: (chunk: string) => void
@@ -178,6 +183,7 @@ const layer = Layer.effect(
         env.LC_CTYPE = "C.UTF-8"
         env.LANG = "C.UTF-8"
       }
+      for (const key of TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS) delete env[key]
       yield* Effect.logInfo("creating session", { id, cmd: command, args, cwd })
       const { spawn } = yield* Effect.promise(() => pty())
       const proc = yield* Effect.sync(() => spawn(command, args, { name: "xterm-256color", cwd, env }))
