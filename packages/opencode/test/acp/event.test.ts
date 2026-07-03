@@ -167,6 +167,41 @@ function toolUpdated(part: ToolPart): Event {
   }
 }
 
+function messageUpdated(sessionID: string, messageID: string): Event {
+  return {
+    id: `evt_${sessionID}_${messageID}_completed`,
+    type: "message.updated",
+    properties: {
+      sessionID,
+      info: {
+        id: messageID,
+        sessionID,
+        role: "assistant",
+        time: { created: Date.now(), completed: Date.now() },
+        parentID: "msg_parent",
+        modelID: "model",
+        providerID: "provider",
+        mode: "build",
+        agent: "build",
+        path: { cwd: "/workspace", root: "/workspace" },
+        cost: 0,
+        tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      },
+    },
+  } as Event
+}
+
+function sessionError(sessionID: string, error: unknown): Event {
+  return {
+    id: `evt_${sessionID}_error`,
+    type: "session.error",
+    properties: {
+      sessionID,
+      error,
+    },
+  } as Event
+}
+
 function assistantMessage(sessionID: string, messageID: string, partID: string, type: DeltaPartType) {
   return {
     info: {
@@ -350,6 +385,68 @@ describe("acp event routing", () => {
     expect(
       harness.updates.filter((update) => update.sessionId === "ses_b").map((update) => update.update.sessionUpdate),
     ).toEqual(["agent_thought_chunk", "agent_thought_chunk"])
+  })
+
+  it("waits for assistant message completion before resolving prompt drain", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_drain", cwd: "/workspace" }))
+
+    let drained = false
+    const waiting = harness.subscription.waitForMessageCompletion("msg_drain", 1000).then(() => {
+      drained = true
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(drained).toBe(false)
+
+    await harness.subscription.handle(messageUpdated("ses_drain", "msg_drain"))
+    await waiting
+    expect(drained).toBe(true)
+  })
+
+  it("emits typed agent_error updates for session errors", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_error", cwd: "/workspace" }))
+
+    await harness.subscription.handle(
+      sessionError("ses_error", {
+        name: "APIError",
+        data: {
+          message: "Weekly budget exhausted",
+          statusCode: 402,
+          isRetryable: false,
+        },
+      }),
+    )
+
+    expect(harness.updates as unknown[]).toEqual([
+      {
+        sessionId: "ses_error",
+        update: {
+          sessionUpdate: "agent_error",
+          error: {
+            type: "budget",
+            message: "Weekly budget exhausted",
+            retryable: false,
+          },
+          stopReason: "error",
+        },
+      },
+    ])
+  })
+
+  it("does not emit agent_error for user-cancelled MessageAbortedError", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_cancel", cwd: "/workspace" }))
+
+    await harness.subscription.handle(
+      sessionError("ses_cancel", {
+        name: "MessageAbortedError",
+        data: { message: "Aborted" },
+      }),
+    )
+
+    expect(harness.updates).toEqual([])
   })
 
   it("does not create extra subscriptions on repeated loadSession", async () => {

@@ -20,6 +20,7 @@ import {
   shellOutputSnapshot,
   completedToolUpdate,
 } from "./tool"
+import { llmErrorPayloadFromSDK, type SDKSessionError, type SessionUpdateWithAgentError } from "./agent-error"
 
 type Connection = Pick<AgentSideConnection, "sessionUpdate"> &
   Partial<Pick<AgentSideConnection, "requestPermission" | "writeTextFile">>
@@ -37,9 +38,12 @@ export function start(input: { sdk: OpencodeClient; connection: Connection; sess
 }
 
 export class Subscription {
+  private static readonly completedAssistantMessageLimit = 2000
   private readonly abort = new AbortController()
   private readonly shellSnapshots = new Map<string, string>()
   private readonly toolStarts = new Set<string>()
+  private readonly completedAssistantMessageIds = new Set<string>()
+  private readonly messageCompletionResolvers = new Map<string, Set<() => void>>()
   private readonly permission: ACPPermission.Handler
   private started = false
 
@@ -70,11 +74,35 @@ export class Subscription {
       case "permission.asked":
         this.permission.handle(event)
         return
+      case "message.updated":
+        return this.handleMessageUpdated(event)
+      case "session.error":
+        return this.handleSessionError(event)
       case "message.part.updated":
         return this.handlePartUpdated(event)
       case "message.part.delta":
         return this.handlePartDelta(event)
     }
+  }
+
+  async waitForMessageCompletion(messageId: string, timeoutMs: number): Promise<void> {
+    if (this.completedAssistantMessageIds.has(messageId)) return
+    return await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = () => {
+        if (settled) return
+        settled = true
+        clearTimeout(timeout)
+        const resolvers = this.messageCompletionResolvers.get(messageId)
+        resolvers?.delete(finish)
+        if (resolvers?.size === 0) this.messageCompletionResolvers.delete(messageId)
+        resolve()
+      }
+      const timeout = setTimeout(finish, timeoutMs)
+      const resolvers = this.messageCompletionResolvers.get(messageId) ?? new Set<() => void>()
+      resolvers.add(finish)
+      this.messageCompletionResolvers.set(messageId, resolvers)
+    })
   }
 
   async replayMessage(message: SessionMessageResponse) {
@@ -126,6 +154,46 @@ export class Subscription {
       }
       if (!this.abort.signal.aborted) await new Promise((resolve) => setTimeout(resolve, 1000))
     }
+  }
+
+  private async handleMessageUpdated(event: Extract<Event, { type: "message.updated" }>) {
+    const info = event.properties.info
+    if (info.role !== "assistant" || info.time.completed === undefined) return
+
+    this.completedAssistantMessageIds.add(info.id)
+    while (this.completedAssistantMessageIds.size > Subscription.completedAssistantMessageLimit) {
+      const first = this.completedAssistantMessageIds.values().next().value
+      if (!first) break
+      this.completedAssistantMessageIds.delete(first)
+    }
+
+    const resolvers = this.messageCompletionResolvers.get(info.id)
+    if (!resolvers) return
+    this.messageCompletionResolvers.delete(info.id)
+    for (const resolve of resolvers) resolve()
+  }
+
+  private async handleSessionError(event: Extract<Event, { type: "session.error" }>) {
+    const props = event.properties
+    const sessionId = props.sessionID
+    const error = props.error as SDKSessionError | undefined
+    if (!sessionId || !error) return
+    if (error.name === "ContextOverflowError" || error.name === "MessageAbortedError") return
+
+    const session = await Effect.runPromise(this.input.session.tryGet(sessionId))
+    if (!session) return
+
+    const update: SessionUpdateWithAgentError = {
+      sessionUpdate: "agent_error",
+      error: llmErrorPayloadFromSDK(error),
+      stopReason: "error",
+    }
+    await this.input.connection
+      .sessionUpdate({
+        sessionId: session.id,
+        update: update as unknown as Parameters<Connection["sessionUpdate"]>[0]["update"],
+      })
+      .catch(() => {})
   }
 
   private async handlePartUpdated(event: EventMessagePartUpdated) {

@@ -520,6 +520,9 @@ export function make(input: {
             ),
           "session",
         )
+        if (events && response.info.id) {
+          yield* Effect.promise(() => events.waitForMessageCompletion(response.info.id, 5000))
+        }
         yield* sendUsageUpdate(input.usage, input.sdk, input.connection, current.id, current.cwd)
         return yield* promptResponse(response.info, params.messageId)
       }
@@ -542,6 +545,9 @@ export function make(input: {
             ),
           "session",
         )
+        if (events && response.info.id) {
+          yield* Effect.promise(() => events.waitForMessageCompletion(response.info.id, 5000))
+        }
         yield* sendUsageUpdate(input.usage, input.sdk, input.connection, current.id, current.cwd)
         return yield* promptResponse(response.info, params.messageId)
       }
@@ -835,7 +841,8 @@ const promptResponse = Effect.fn("ACP.promptResponse")(function* (
   if (info.error.name === "MessageAbortedError") {
     return {
       stopReason: "cancelled" as const,
-      ...base,
+      ...(messageId ? { userMessageId: messageId } : {}),
+      _meta: {},
     }
   }
 

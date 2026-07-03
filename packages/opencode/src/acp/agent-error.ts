@@ -24,6 +24,15 @@
  */
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk"
+import type {
+  ApiError,
+  ContextOverflowError,
+  MessageAbortedError,
+  MessageOutputLengthError,
+  ProviderAuthError,
+  StructuredOutputError,
+  UnknownError,
+} from "@opencode-ai/sdk/v2"
 
 /**
  * Closed vocabulary for the category of a failed LLM call.
