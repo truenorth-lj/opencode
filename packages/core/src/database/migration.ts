@@ -17,14 +17,20 @@ export type Migration = {
 
 export function apply(db: Database) {
   return lock.withPermit(
-    Effect.gen(function* () {
-      const tables = yield* db.all<{ name: string }>(
-        sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
-      )
-      if (tables.some((table) => table.name === "session")) return yield* applyOnly(db, migrations)
-      if (tables.length > 0) return yield* Effect.die("Database is not empty and has no session table")
-      yield* db.transaction((tx) =>
+    db.transaction(
+      (tx) =>
         Effect.gen(function* () {
+          const tables = yield* tx.all<{ name: string }>(
+            sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'`,
+          )
+          if (tables.some((table) => table.name === "session")) {
+            yield* applyPending(tx, migrations)
+            return
+          }
+          if (tables.length > 0) {
+            yield* Effect.die("Database is not empty and has no session table")
+            return
+          }
           yield* schema.up(tx)
           yield* tx.run(
             sql`CREATE TABLE ${sql.identifier("migration")} (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)`,
@@ -35,46 +41,47 @@ export function apply(db: Database) {
             ),
           )
         }),
-      )
-    }),
+      { behavior: "immediate" },
+    ),
   )
 }
 
 export function applyOnly(db: Database, input: Migration[]) {
+  return lock.withPermit(db.transaction((tx) => applyPending(tx, input), { behavior: "immediate" }))
+}
+
+function applyPending(tx: Transaction, input: Migration[]) {
   return Effect.gen(function* () {
-    yield* db.run(
+    yield* tx.run(
       sql`CREATE TABLE IF NOT EXISTS ${sql.identifier("migration")} (id TEXT PRIMARY KEY, time_completed INTEGER NOT NULL)`,
     )
     let completed = new Set(
-      (yield* db.all<{ id: string }>(sql`SELECT id FROM ${sql.identifier("migration")}`)).map((row) => row.id),
+      (yield* tx.all<{ id: string }>(sql`SELECT id FROM ${sql.identifier("migration")}`)).map((row) => row.id),
     )
     if (completed.size === 0) {
       // Existing installs used Drizzle's migration journal. Seed the new
       // journal once so TypeScript migrations don't replay old SQL.
-      if (
-        yield* db.get(sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${"__drizzle_migrations"}`)
-      ) {
-        yield* db.run(sql`
+      const tables = yield* tx.all<{ name: string }>(
+        sql`SELECT name FROM sqlite_master WHERE type = 'table' AND name = ${"__drizzle_migrations"}`,
+      )
+      if (tables.length > 0) {
+        yield* tx.run(sql`
           INSERT OR IGNORE INTO ${sql.identifier("migration")} (id, time_completed)
           SELECT name, ${Date.now()}
           FROM ${sql.identifier("__drizzle_migrations")}
           WHERE name IS NOT NULL
         `)
         completed = new Set(
-          (yield* db.all<{ id: string }>(sql`SELECT id FROM ${sql.identifier("migration")}`)).map((row) => row.id),
+          (yield* tx.all<{ id: string }>(sql`SELECT id FROM ${sql.identifier("migration")}`)).map((row) => row.id),
         )
       }
     }
 
     for (const migration of input) {
       if (completed.has(migration.id)) continue
-      yield* db.transaction((tx) =>
-        Effect.gen(function* () {
-          yield* migration.up(tx)
-          yield* tx.run(
-            sql`INSERT INTO ${sql.identifier("migration")} (id, time_completed) VALUES (${migration.id}, ${Date.now()})`,
-          )
-        }),
+      yield* migration.up(tx)
+      yield* tx.run(
+        sql`INSERT INTO ${sql.identifier("migration")} (id, time_completed) VALUES (${migration.id}, ${Date.now()})`,
       )
     }
   })
