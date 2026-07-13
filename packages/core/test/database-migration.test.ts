@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { $ } from "bun"
+import { spawn } from "child_process"
+import fs from "fs/promises"
 import { fileURLToPath } from "url"
 import path from "path"
 import { SqliteClient } from "@effect/sql-sqlite-bun"
@@ -37,7 +39,67 @@ const run = <A, E>(effect: Effect.Effect<A, E, SqlClientService>) =>
 
 const makeDb = EffectDrizzleSqlite.makeWithDefaults()
 
+const migrationWorker = path.join(import.meta.dir, "fixture/database-migration-worker.ts")
+
+function spawnMigrationWorker(filename: string, barrier: string, worker: string) {
+  const proc = spawn(process.execPath, [migrationWorker, JSON.stringify({ filename, barrier, worker })], {
+    cwd: path.join(import.meta.dir, ".."),
+    stdio: ["ignore", "pipe", "pipe"],
+  })
+  const stdout: Buffer[] = []
+  const stderr: Buffer[] = []
+  proc.stdout.on("data", (data) => stdout.push(Buffer.from(data)))
+  proc.stderr.on("data", (data) => stderr.push(Buffer.from(data)))
+  return {
+    result: new Promise<{ code: number; stdout: string; stderr: string }>((resolve) => {
+      proc.on("close", (code) =>
+        resolve({
+          code: code ?? 1,
+          stdout: Buffer.concat(stdout).toString(),
+          stderr: Buffer.concat(stderr).toString(),
+        }),
+      )
+    }),
+  }
+}
+
+async function waitForFile(filename: string) {
+  const deadline = Date.now() + 5_000
+  while (Date.now() < deadline) {
+    if (
+      await fs
+        .stat(filename)
+        .then(() => true)
+        .catch(() => false)
+    )
+      return
+    await Bun.sleep(10)
+  }
+  throw new Error(`Timed out waiting for ${filename}`)
+}
+
 describe("DatabaseMigration", () => {
+  test("serializes migrations across processes", async () => {
+    await using tmp = await tmpdir()
+    const filename = path.join(tmp.path, "cross-process.sqlite")
+    const barrier = path.join(tmp.path, "barrier")
+    await fs.mkdir(barrier)
+    const first = spawnMigrationWorker(filename, barrier, "first")
+    await waitForFile(path.join(barrier, "first"))
+    const second = spawnMigrationWorker(filename, barrier, "second")
+
+    const results = await Promise.all([first.result, second.result])
+    expect(
+      results.map((result) => result.code),
+      results.map((result) => result.stderr).join("\n"),
+    ).toEqual([0, 0])
+
+    const sqlite = new (await import("bun:sqlite")).Database(filename, { readonly: true })
+    expect(sqlite.query("SELECT id FROM migration").all()).toEqual([{ id: "cross-process-migration" }])
+    expect(sqlite.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" })
+    sqlite.close()
+  })
+
   test("serializes concurrent embedded initialization for one database path", async () => {
     await using tmp = await tmpdir()
     const filename = path.join(tmp.path, "embedded.sqlite")
