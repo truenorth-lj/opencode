@@ -13,12 +13,24 @@
  *   packages/models/src/models/llm_errors.py    (tn-mono)
  *   services/tn-claw/src/tn_claw/schemas/agent_error.py    (tn-mono)
  *
+ * Compatibility classification: bounded compatibility writer. The current
+ * TrueNorth authority is the Python contract above; this fork writes the same
+ * wire shape because the upstream ACP SDK's closed union cannot represent it.
+ * Preserve the discriminant and payload fields until every deployed tn-claw
+ * revision can consume the eventual native SDK literal.
+ *
+ * TODO(tn-claw-agent-error-cleanup): replace this extension with the native
+ * SDK member only after an adopted SDK version exposes `agent_error`, all
+ * supported tn-claw versions are deployed with that SDK, contract tests pass
+ * without the local cast/union, the real session-error entrypoint emits the
+ * same payload, and local-fallback selection remains zero for the agreed
+ * rollback window.
+ *
  * Phase chain:
  *   - Phase 1A: Python contract (tn-mono PR #721, MERGED 2026-05-08)
  *   - Phase 1B: this file (TS mirror in our anomalyco/opencode fork)
- *   - Phase 4:  `session/processor.ts` `halt()` emits an `agent_error`
- *               frame using `SessionUpdateWithAgentError` at its
- *               `connection.sessionUpdate(...)` callsite
+ *   - Current writer: `acp/event.ts` translates `session.error` into an
+ *     `agent_error` frame using `SessionUpdateWithAgentError`.
  *
  * Spec: `specs/20260508-llm-error-propagation/spec.md`
  */
@@ -122,8 +134,8 @@ export interface AgentErrorUpdate {
  * value to the upstream `SessionUpdate` — that would lose the typed
  * `error` field in callers. Instead, emit code uses this superset.
  *
- * Once `@agentclientprotocol/sdk` adopts `agent_error` upstream, drop
- * this type alias and import the new SDK literal directly.
+ * Removal is governed by `TODO(tn-claw-agent-error-cleanup)` above; SDK type
+ * availability alone is not sufficient proof that deployed readers are safe.
  */
 export type SessionUpdateWithAgentError = SessionUpdate | AgentErrorUpdate
 

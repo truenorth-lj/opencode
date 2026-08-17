@@ -143,7 +143,9 @@ describe("session.retry.delay", () => {
         Effect.ignore(step(error)),
       )
 
-      expect(attempts).toStrictEqual([1, 2, 3, 4, 5])
+      expect(attempts).toStrictEqual(
+        Array.from({ length: SessionRetry.RETRY_MAX_RETRIES }, (_, index) => index + 1),
+      )
     }),
   )
 })
