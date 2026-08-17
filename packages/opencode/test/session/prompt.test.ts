@@ -500,6 +500,78 @@ noLLMServer.instance(
   { config: cfg },
 )
 
+it.instance("loop resumes a pre-rollover session for a post-rollover user message", () =>
+  Effect.gen(function* () {
+    const { llm } = yield* useServerConfig(providerCfg)
+    const prompt = yield* SessionPrompt.Service
+    const sessions = yield* Session.Service
+    const chat = yield* sessions.create({ title: "Pinned" })
+    const oldUserID = MessageID.make("msg_ff2925b0001OldTurn")
+    const oldAssistantID = MessageID.make("msg_ff293407b001Q1u3mKEHm5SRCw")
+    const newUserID = MessageID.make("msg_00be9af1b001YLNlbASTFsaH4R")
+
+    yield* sessions.updateMessage({
+      id: oldUserID,
+      role: "user",
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      time: { created: Date.parse("2026-08-11T00:00:00.000Z") },
+    })
+    yield* sessions.updatePart({
+      id: PartID.make("prt_old_user"),
+      messageID: oldUserID,
+      sessionID: chat.id,
+      type: "text",
+      text: "old turn",
+    })
+    yield* sessions.updateMessage({
+      id: oldAssistantID,
+      role: "assistant",
+      parentID: oldUserID,
+      sessionID: chat.id,
+      mode: "build",
+      agent: "build",
+      cost: 0,
+      path: { cwd: "/tmp", root: "/tmp" },
+      tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+      modelID: ref.modelID,
+      providerID: ref.providerID,
+      time: {
+        created: Date.parse("2026-08-11T00:00:01.000Z"),
+        completed: Date.parse("2026-08-11T00:00:02.000Z"),
+      },
+      finish: "stop",
+    })
+    yield* sessions.updateMessage({
+      id: newUserID,
+      role: "user",
+      sessionID: chat.id,
+      agent: "build",
+      model: ref,
+      time: { created: Date.parse("2026-08-16T00:00:00.000Z") },
+    })
+    yield* sessions.updatePart({
+      id: PartID.make("prt_new_user"),
+      messageID: newUserID,
+      sessionID: chat.id,
+      type: "text",
+      text: "wake up after rollover",
+    })
+    yield* llm.text("recovered")
+
+    const result = yield* prompt.loop({ sessionID: chat.id })
+
+    expect(yield* llm.hits).toHaveLength(1)
+    expect(result.info.role).toBe("assistant")
+    if (result.info.role === "assistant") {
+      expect(result.info.id).not.toBe(oldAssistantID)
+      expect(result.info.parentID).toBe(newUserID)
+    }
+    expect(result.parts).toContainEqual(expect.objectContaining({ type: "text", text: "recovered" }))
+  }),
+)
+
 it.instance("loop exits without an LLM request for interrupted orphan tool calls", () =>
   Effect.gen(function* () {
     const { llm } = yield* useServerConfig(providerCfg)
