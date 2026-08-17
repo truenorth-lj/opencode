@@ -16,6 +16,46 @@ const BUFFER_LIMIT = 1024 * 1024 * 2
 // Cap retention so abandoned terminals do not accumulate unbounded buffers.
 const EXITED_LIMIT = 25
 const pty = lazy(() => import("#pty"))
+const TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS = [
+  "TN_CLAW_LOOPBACK_TOKEN",
+  "TN_CLAW_SESSION_ID",
+  "TN_CLAW_INSTANCE_ID",
+] as const
+
+function spawnWithoutTnClawSessionlessEnv(
+  spawn: (file: string, args: string[], opts: { name: string; cwd: string; env: Record<string, string> }) => Proc,
+  command: string,
+  args: string[],
+  opts: { name: string; cwd: string; env: Record<string, string> },
+) {
+  const previous: Partial<Record<(typeof TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS)[number], string>> = {}
+  for (const key of TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS) {
+    previous[key] = process.env[key]
+    delete process.env[key]
+  }
+  try {
+    return spawn(command, args, opts)
+  } finally {
+    for (const key of TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS) {
+      const value = previous[key]
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
+function tnClawSessionlessSpawnCommand(command: string, args: string[]) {
+  if (process.platform === "win32") return { command, args }
+  return {
+    command: "/usr/bin/env",
+    args: [
+      ...TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS.flatMap((key) => ["-u", key]),
+      "--",
+      command,
+      ...args,
+    ],
+  }
+}
 
 type Subscriber = {
   readonly onData: (chunk: string) => void
@@ -178,9 +218,17 @@ const layer = Layer.effect(
         env.LC_CTYPE = "C.UTF-8"
         env.LANG = "C.UTF-8"
       }
+      for (const key of TN_CLAW_SESSIONLESS_PROTECTED_ENV_KEYS) delete env[key]
       yield* Effect.logInfo("creating session", { id, cmd: command, args, cwd })
       const { spawn } = yield* Effect.promise(() => pty())
-      const proc = yield* Effect.sync(() => spawn(command, args, { name: "xterm-256color", cwd, env }))
+      const spawnCommand = tnClawSessionlessSpawnCommand(command, args)
+      const proc = yield* Effect.sync(() =>
+        spawnWithoutTnClawSessionlessEnv(spawn, spawnCommand.command, spawnCommand.args, {
+          name: "xterm-256color",
+          cwd,
+          env,
+        }),
+      )
       const info: Info = {
         id,
         title: input.title || `Terminal ${id.slice(-4)}`,

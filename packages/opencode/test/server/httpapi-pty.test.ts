@@ -52,6 +52,22 @@ function serverUrl() {
 
 const directoryHeader = (dir: string) => HttpClientRequest.setHeader("x-opencode-directory", dir)
 
+async function withEnv(values: Record<string, string>, fn: () => Promise<void>) {
+  const previous: Record<string, string | undefined> = {}
+  for (const [key, value] of Object.entries(values)) {
+    previous[key] = process.env[key]
+    process.env[key] = value
+  }
+  try {
+    await fn()
+  } finally {
+    for (const [key, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[key]
+      else process.env[key] = value
+    }
+  }
+}
+
 afterEach(async () => {
   await disposeAllInstances()
   await resetDatabase()
@@ -161,6 +177,53 @@ describe("pty HttpApi bridge", () => {
     const list = await app().request(PtyPaths.list, { headers })
     expect(list.status).toBe(200)
     expect(await list.json()).toEqual([])
+  })
+
+  testPty("strips tn-claw loopback env from legacy sessionless PTY processes", async () => {
+    await withEnv(
+      {
+        TN_CLAW_LOOPBACK_TOKEN: "parent-loopback",
+        TN_CLAW_SESSION_ID: "parent-session",
+        TN_CLAW_INSTANCE_ID: "parent-instance",
+      },
+      async () => {
+        await using tmp = await tmpdir({ git: true, config: { formatter: false, lsp: false } })
+        const headers = { "x-opencode-directory": tmp.path }
+        const envPath = `${tmp.path}/legacy-sessionless-env.txt`
+        const created = await app().request(PtyPaths.create, {
+          method: "POST",
+          headers: { ...headers, "content-type": "application/json" },
+          body: JSON.stringify({
+            command: "/bin/sh",
+            args: ["-c", `env > ${envPath}; sleep 0.2`],
+            env: {
+              TN_CLAW_LOOPBACK_TOKEN: "caller-token",
+              TN_CLAW_SESSION_ID: "caller-session",
+              TN_CLAW_INSTANCE_ID: "caller-instance",
+              OTHER_ENV: "kept",
+            },
+          }),
+        })
+        expect(created.status).toBe(200)
+        const info = await created.json()
+        try {
+          const deadline = Date.now() + 5_000
+          let output = ""
+          while (Date.now() < deadline) {
+            const file = Bun.file(envPath)
+            if (await file.exists()) output = await file.text()
+            if (output.includes("OTHER_ENV=kept")) break
+            await new Promise((resolve) => setTimeout(resolve, 50))
+          }
+          expect(output).not.toContain("TN_CLAW_LOOPBACK_TOKEN=")
+          expect(output).not.toContain("TN_CLAW_SESSION_ID=")
+          expect(output).not.toContain("TN_CLAW_INSTANCE_ID=")
+          expect(output).toContain("OTHER_ENV=kept")
+        } finally {
+          await app().request(PtyPaths.remove.replace(":ptyID", info.id), { method: "DELETE", headers })
+        }
+      },
+    )
   })
 
   testPty("disposes PTY sessions with their legacy instance", async () => {

@@ -1188,6 +1188,7 @@ describe("ACP service sessions", () => {
     )
 
     expect(result.stopReason).toBe("cancelled")
+    expect(result.usage).toBeUndefined()
   })
 
   it("prompt maps assistant and user audience annotations", async () => {

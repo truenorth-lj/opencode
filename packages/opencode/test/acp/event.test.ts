@@ -167,6 +167,17 @@ function toolUpdated(part: ToolPart): Event {
   }
 }
 
+function sessionError(sessionID: string, error: unknown): Event {
+  return {
+    id: `evt_${sessionID}_error`,
+    type: "session.error",
+    properties: {
+      sessionID,
+      error,
+    },
+  } as Event
+}
+
 function assistantMessage(sessionID: string, messageID: string, partID: string, type: DeltaPartType) {
   return {
     info: {
@@ -350,6 +361,51 @@ describe("acp event routing", () => {
     expect(
       harness.updates.filter((update) => update.sessionId === "ses_b").map((update) => update.update.sessionUpdate),
     ).toEqual(["agent_thought_chunk", "agent_thought_chunk"])
+  })
+
+  it("emits typed agent_error updates for session errors", async () => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_error", cwd: "/workspace" }))
+
+    await harness.subscription.handle(
+      sessionError("ses_error", {
+        name: "APIError",
+        data: {
+          message: "Weekly budget exhausted",
+          statusCode: 402,
+          isRetryable: false,
+        },
+      }),
+    )
+
+    expect(harness.updates as unknown[]).toEqual([
+      {
+        sessionId: "ses_error",
+        update: {
+          sessionUpdate: "agent_error",
+          error: {
+            type: "budget",
+            message: "Weekly budget exhausted",
+            retryable: false,
+          },
+          stopReason: "error",
+        },
+      },
+    ])
+  })
+
+  it.each([
+    ["MessageAbortedError", { message: "Aborted" }],
+    ["MessageOutputLengthError", {}],
+    ["ContentFilterError", { message: "Blocked by content filter" }],
+    ["ProviderAuthError", { providerID: "test", message: "Authentication required" }],
+  ])("does not emit agent_error for %s handled by the prompt response", async (name, data) => {
+    const harness = createHarness()
+    await Effect.runPromise(harness.session.create({ id: "ses_terminal", cwd: "/workspace" }))
+
+    await harness.subscription.handle(sessionError("ses_terminal", { name, data }))
+
+    expect(harness.updates).toEqual([])
   })
 
   it("does not create extra subscriptions on repeated loadSession", async () => {

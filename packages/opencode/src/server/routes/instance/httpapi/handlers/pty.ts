@@ -24,6 +24,7 @@ import { InstanceHttpApi } from "../api"
 import * as ApiError from "../errors"
 import { CursorQuery, PtyConnectApi } from "../groups/pty"
 import { WebSocketTracker } from "../websocket-tracker"
+import { protectSessionlessEnv } from "@/tn-claw/session-env"
 
 function validOrigin(request: HttpServerRequest.HttpServerRequest, opts: CorsOptions | undefined) {
   return isAllowedRequestOrigin(request.headers.origin, request.headers.host, opts)
@@ -69,13 +70,14 @@ export const ptyHandlers = HttpApiBuilder.group(InstanceHttpApi, "pty", (handler
     const create = Effect.fn("PtyHttpApi.create")(function* (ctx: { payload: typeof Pty.CreateInput.Type }) {
       const cwd = ctx.payload.cwd || (yield* InstanceState.context).directory
       const shell = yield* plugin.trigger("shell.env", { cwd }, { env: {} as Record<string, string> })
+      const env = protectSessionlessEnv({ ...ctx.payload.env, ...shell.env })
       return yield* pty(
         Pty.Service.use((service) =>
           service.create({
             ...ctx.payload,
             args: ctx.payload.args ? [...ctx.payload.args] : undefined,
             cwd,
-            env: { ...ctx.payload.env, ...shell.env },
+            env,
           }),
         ),
       )
