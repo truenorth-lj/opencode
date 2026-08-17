@@ -394,16 +394,16 @@ describe("acp event routing", () => {
     ])
   })
 
-  it("does not emit agent_error for user-cancelled MessageAbortedError", async () => {
+  it.each([
+    ["MessageAbortedError", { message: "Aborted" }],
+    ["MessageOutputLengthError", {}],
+    ["ContentFilterError", { message: "Blocked by content filter" }],
+    ["ProviderAuthError", { providerID: "test", message: "Authentication required" }],
+  ])("does not emit agent_error for %s handled by the prompt response", async (name, data) => {
     const harness = createHarness()
-    await Effect.runPromise(harness.session.create({ id: "ses_cancel", cwd: "/workspace" }))
+    await Effect.runPromise(harness.session.create({ id: "ses_terminal", cwd: "/workspace" }))
 
-    await harness.subscription.handle(
-      sessionError("ses_cancel", {
-        name: "MessageAbortedError",
-        data: { message: "Aborted" },
-      }),
-    )
+    await harness.subscription.handle(sessionError("ses_terminal", { name, data }))
 
     expect(harness.updates).toEqual([])
   })

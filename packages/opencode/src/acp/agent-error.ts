@@ -36,15 +36,7 @@
  */
 
 import type { SessionUpdate } from "@agentclientprotocol/sdk"
-import type {
-  ApiError,
-  ContextOverflowError,
-  MessageAbortedError,
-  MessageOutputLengthError,
-  ProviderAuthError,
-  StructuredOutputError,
-  UnknownError,
-} from "@opencode-ai/sdk/v2"
+import type { EventSessionError } from "@opencode-ai/sdk/v2"
 
 /**
  * Closed vocabulary for the category of a failed LLM call.
@@ -162,19 +154,9 @@ function isLLMErrorPayload(value: unknown): value is LLMErrorPayload {
   return (LLM_ERROR_TYPES as readonly string[]).includes(p.type)
 }
 
-/**
- * Discriminated union of every error variant `EventSessionError.properties.error`
- * may carry, mirroring the SDK definition in
- * `@opencode-ai/sdk/v2`'s generated types.
- */
-export type SDKSessionError =
-  | ApiError
-  | ContextOverflowError
-  | ProviderAuthError
-  | UnknownError
-  | MessageOutputLengthError
-  | MessageAbortedError
-  | StructuredOutputError
+/** Every error variant carried by the generated SDK's session error event. */
+export type SDKSessionError = NonNullable<EventSessionError["properties"]["error"]>
+type SDKApiError = Extract<SDKSessionError, { name: "APIError" }>
 
 /**
  * Convert an SDK `EventSessionError.properties.error` payload into the
@@ -218,8 +200,8 @@ export function llmErrorPayloadFromSDK(error: SDKSessionError): LLMErrorPayload 
   }
 
   // MessageOutputLengthError / MessageAbortedError / StructuredOutputError /
-  // UnknownError — no proxy classification available; treat as a transient
-  // unknown failure.
+  // ContentFilterError / UnknownError — no proxy classification available;
+  // treat as a transient unknown failure.
   const message = "data" in error && "message" in error.data ? (error.data as { message: string }).message : error.name
   return {
     type: "unknown",
@@ -228,7 +210,7 @@ export function llmErrorPayloadFromSDK(error: SDKSessionError): LLMErrorPayload 
   }
 }
 
-function llmErrorPayloadFromApiError(error: ApiError): LLMErrorPayload {
+function llmErrorPayloadFromApiError(error: SDKApiError): LLMErrorPayload {
   const headers = error.data.responseHeaders ?? {}
   const headerType = readHeader(headers, "x-llm-error-type")
   const headerRetryable = readHeader(headers, "x-llm-error-retryable")

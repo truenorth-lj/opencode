@@ -30,6 +30,13 @@ type GlobalEventEnvelope = {
 type GlobalEventStream = {
   stream: AsyncIterable<GlobalEventEnvelope>
 }
+const PROMPT_RESPONSE_ERRORS: ReadonlySet<SDKSessionError["name"]> = new Set([
+  "ContextOverflowError",
+  "MessageAbortedError",
+  "MessageOutputLengthError",
+  "ContentFilterError",
+  "ProviderAuthError",
+])
 
 export function start(input: { sdk: OpencodeClient; connection: Connection; session: ACPSession.Interface }) {
   const subscription = new Subscription(input)
@@ -196,7 +203,7 @@ export class Subscription {
     const sessionId = props.sessionID
     const error = props.error as SDKSessionError | undefined
     if (!sessionId || !error) return
-    if (error.name === "ContextOverflowError" || error.name === "MessageAbortedError") return
+    if (PROMPT_RESPONSE_ERRORS.has(error.name)) return
 
     const session = await Effect.runPromise(this.input.session.tryGet(sessionId))
     if (!session) return
