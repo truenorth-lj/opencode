@@ -208,10 +208,13 @@ describe("pty HttpApi bridge", () => {
         const info = await created.json()
         try {
           const deadline = Date.now() + 5_000
-          while (Date.now() < deadline && !(await Bun.file(envPath).exists())) {
+          let output = ""
+          while (Date.now() < deadline) {
+            const file = Bun.file(envPath)
+            if (await file.exists()) output = await file.text()
+            if (output.includes("OTHER_ENV=kept")) break
             await new Promise((resolve) => setTimeout(resolve, 50))
           }
-          const output = await Bun.file(envPath).text()
           expect(output).not.toContain("TN_CLAW_LOOPBACK_TOKEN=")
           expect(output).not.toContain("TN_CLAW_SESSION_ID=")
           expect(output).not.toContain("TN_CLAW_INSTANCE_ID=")
